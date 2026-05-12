@@ -1,0 +1,97 @@
+version: "3"
+
+# Shuffle SOAR — stack completo para demo local
+# Levantar: docker compose up -d
+# UI:       http://localhost:3001
+# Apagar:   docker compose down
+
+services:
+
+  frontend:
+    image: ghcr.io/shuffle/shuffle-frontend:latest
+    container_name: shuffle-frontend
+    hostname: shuffle-frontend
+    ports:
+      - "3001:80"
+    networks:
+      - shuffle
+    environment:
+      - BACKEND_HOSTNAME=${BACKEND_HOSTNAME:-shuffle-backend}
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  backend:
+    image: ghcr.io/shuffle/shuffle-backend:latest
+    container_name: shuffle-backend
+    hostname: shuffle-backend
+    ports:
+      - "5001:5001"
+    networks:
+      - shuffle
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./shuffle-apps:/shuffle-apps
+      - ./shuffle-files:/shuffle-files
+    environment:
+      - BACKEND_HOSTNAME=shuffle-backend
+      - SHUFFLE_APP_HOTLOAD_FOLDER=/shuffle-apps
+      - SHUFFLE_FILE_LOCATION=/shuffle-files
+      - SHUFFLE_DEFAULT_USERNAME=${SHUFFLE_DEFAULT_USERNAME:-admin}
+      - SHUFFLE_DEFAULT_PASSWORD=${SHUFFLE_DEFAULT_PASSWORD:-password}
+      - SHUFFLE_DEFAULT_APIKEY=${SHUFFLE_DEFAULT_APIKEY:-}
+      - OPENSEARCH_URL=http://shuffle-opensearch:9200
+      - SHUFFLE_OPENSEARCH_URL=http://shuffle-opensearch:9200
+    restart: unless-stopped
+    depends_on:
+      - opensearch
+
+  orborus:
+    image: ghcr.io/shuffle/shuffle-orborus:latest
+    container_name: shuffle-orborus
+    hostname: shuffle-orborus
+    networks:
+      - shuffle
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - ENVIRONMENT_NAME=Shuffle
+      - BASE_URL=http://shuffle-backend:5001
+      - DOCKER_API_VERSION=1.40
+      - SHUFFLE_APP_SDK_TIMEOUT=300
+      - CLEANUP=true
+    restart: unless-stopped
+    security_opt:
+      - seccomp:unconfined
+
+  opensearch:
+    image: opensearchproject/opensearch:2.6.0
+    container_name: shuffle-opensearch
+    hostname: shuffle-opensearch
+    networks:
+      - shuffle
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms1024m -Xmx1024m"
+      - bootstrap.memory_lock=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - DISABLE_SECURITY_PLUGIN=true
+      - cluster.routing.allocation.disk.threshold_enabled=false
+      - cluster.name=shuffle
+      - discovery.type=single-node
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - shuffle-opensearch:/usr/share/opensearch/data
+    restart: unless-stopped
+
+networks:
+  shuffle:
+    driver: bridge
+
+volumes:
+  shuffle-opensearch:

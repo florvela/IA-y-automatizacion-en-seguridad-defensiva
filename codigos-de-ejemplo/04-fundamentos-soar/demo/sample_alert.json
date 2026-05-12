@@ -1,0 +1,13 @@
+{
+  "id": "ALT-2024-001",
+  "tipo": "fuerza_bruta_ssh",
+  "ip_origen": "173.234.31.186",
+  "usuario": "root",
+  "intentos": 47,
+  "puerto": 22,
+  "primera_vez": "2024-01-25T19:30:11Z",
+  "ultima_vez": "2024-01-25T19:43:58Z",
+  "severidad": "HIGH",
+  "fuente": "SIEM",
+  "hostname_victima": "srv-bastion-01"
+}
