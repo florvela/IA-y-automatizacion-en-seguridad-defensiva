@@ -1,11 +1,21 @@
 """
 Servidor MCP con herramientas de seguridad.
-Tools:
-  - check_ip_reputation   : consulta VirusTotal
-  - create_incident_ticket: crea ticket de incidente
-  - propose_host_isolation: propone aislar un host (requiere aprobación)
+
+Las tres primitivas de MCP:
+  TOOLS      : el LLM ejecuta acciones
+    - check_ip_reputation   : consulta VirusTotal
+    - create_incident_ticket: crea ticket de incidente
+    - propose_host_isolation: propone aislar un host (requiere aprobación)
+  RESOURCES  : el LLM lee datos (solo lectura, como un GET)
+    - soc://config          : umbrales y política del SOC
+    - soc://runbooks/{tipo} : el runbook para un tipo de incidente
+    - soc://tickets         : tickets de incidente abiertos
+  PROMPTS    : plantillas reutilizables
+    - triage_alerta         : instrucciones para clasificar una alerta
+    - reporte_incidente     : estructura para redactar el reporte final
 """
 
+import glob
 import json
 import logging
 import os
@@ -138,6 +148,87 @@ def propose_host_isolation(hostname: str, reason: str, severity: str) -> str:
         "warning":  "Esta acción requiere aprobación explícita del analista.",
         "impact":   f"{hostname} quedará sin acceso a la red hasta reversión manual."
     })
+
+
+# ─────────────────────────────────────────────────────────────
+# RESOURCES — datos que el LLM puede LEER (solo lectura, como un GET)
+# ─────────────────────────────────────────────────────────────
+
+# Runbooks internos del SOC, indexados por tipo de incidente
+RUNBOOKS = {
+    "DATA_EXFILTRATION": (
+        "RUNBOOK — Exfiltración de datos\n"
+        "1. Confirmar el volumen y destino del tráfico saliente.\n"
+        "2. Verificar la reputación de la IP destino (VirusTotal).\n"
+        "3. Si es maliciosa: crear ticket y proponer aislar el host.\n"
+        "4. Preservar evidencia y notificar al responsable del activo."
+    ),
+    "BRUTE_FORCE": (
+        "RUNBOOK — Fuerza bruta\n"
+        "1. Registrar IP origen, usuario e intentos.\n"
+        "2. Verificar si la IP es conocida/interna.\n"
+        "3. Bloquear la IP y forzar cambio de contraseña.\n"
+        "4. Escalar si hubo acceso exitoso."
+    ),
+}
+
+
+@mcp.resource("soc://config")
+def soc_config() -> str:
+    """Configuración y política del SOC: umbrales de decisión y modo de operación."""
+    return json.dumps({
+        "umbral_ip_maliciosa": 5,          # motores de VT para considerar MALICIOUS
+        "auto_aislar": False,              # el aislamiento SIEMPRE requiere humano
+        "severidades": ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+        "human_in_the_loop": ["propose_host_isolation"],
+    }, indent=2)
+
+
+@mcp.resource("soc://runbooks/{tipo}")
+def runbook(tipo: str) -> str:
+    """Devuelve el runbook interno para un tipo de incidente (ej: DATA_EXFILTRATION)."""
+    return RUNBOOKS.get(tipo.upper(), f"No hay runbook para el tipo '{tipo}'.")
+
+
+@mcp.resource("soc://tickets")
+def tickets_abiertos() -> str:
+    """Lista los tickets de incidente creados (leídos de la carpeta tickets/)."""
+    ticks = []
+    for ruta in sorted(glob.glob("tickets/*.json")):
+        with open(ruta) as f:
+            t = json.load(f)
+        ticks.append({"id": t["id"], "severity": t["severity"],
+                      "status": t["status"], "title": t["title"]})
+    return json.dumps({"total": len(ticks), "tickets": ticks}, indent=2)
+
+
+# ─────────────────────────────────────────────────────────────
+# PROMPTS — plantillas reutilizables para tareas frecuentes
+# ─────────────────────────────────────────────────────────────
+
+@mcp.prompt()
+def triage_alerta(evento: str) -> str:
+    """Plantilla de triage: pide clasificar una alerta con salida estructurada."""
+    return (
+        "Sos un analista de un SOC. Clasificá la siguiente alerta y devolvé un JSON con:\n"
+        '  {"tipo": "...", "severidad": "LOW|MEDIUM|HIGH|CRITICAL",\n'
+        '   "falso_positivo_probable": true/false, "razonamiento": "...",\n'
+        '   "accion_recomendada": "..."}\n'
+        "Verificá la reputación de las IPs con las herramientas disponibles antes de decidir.\n\n"
+        f"Alerta:\n{evento}"
+    )
+
+
+@mcp.prompt()
+def reporte_incidente(tipo: str) -> str:
+    """Plantilla para redactar el reporte final de un incidente ya investigado."""
+    return (
+        f"Redactá el reporte del incidente de tipo {tipo} con esta estructura fija:\n"
+        "1. Resumen ejecutivo\n2. Línea de tiempo\n3. Análisis técnico\n"
+        "4. Impacto\n5. IOCs\n6. Acciones tomadas\n7. Recomendaciones\n\n"
+        "Usá únicamente la información recolectada durante la investigación; "
+        "no inventes IOCs ni datos que no puedas verificar."
+    )
 
 
 if __name__ == "__main__":
