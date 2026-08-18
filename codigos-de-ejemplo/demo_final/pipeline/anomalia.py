@@ -4,7 +4,7 @@ Carga el modelo entrenado y evalúa el evento actual.
 """
 
 import time
-import numpy as np
+import pandas as pd
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -16,9 +16,13 @@ from pipeline.evento import EVENT
 console = Console()
 
 
-def _event_to_features() -> np.ndarray:
-    """Convierte el evento global en el vector de features que espera el modelo."""
-    return np.array([[
+def _event_to_features() -> pd.DataFrame:
+    """Convierte el evento global en el DataFrame de features que espera el modelo.
+
+    Se usa un DataFrame (no un array) para conservar los nombres de columna con
+    los que se entrenó el modelo y evitar el UserWarning de sklearn.
+    """
+    valores = [
         EVENT["bytes_sent"],
         EVENT["bytes_recv"],
         EVENT["duration"],
@@ -27,7 +31,8 @@ def _event_to_features() -> np.ndarray:
         EVENT["packets_recv"],
         EVENT["bytes_sent"] / (EVENT["packets_sent"] + 1),
         EVENT["bytes_sent"] / (EVENT["bytes_recv"]  + 1),
-    ]])
+    ]
+    return pd.DataFrame([valores], columns=FEATURES)
 
 
 def evaluar() -> bool:

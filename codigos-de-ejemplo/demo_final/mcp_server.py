@@ -21,11 +21,11 @@ import logging
 import os
 import datetime
 import requests
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 logging.getLogger("mcp").setLevel(logging.WARNING)
 
-mcp = FastMCP("SOC Security Tools")
+mcp = MCPServer("SOC Security Tools")
 
 VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY", "")
 
