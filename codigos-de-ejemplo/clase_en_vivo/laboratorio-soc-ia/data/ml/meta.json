@@ -1,0 +1,37 @@
+{
+  "version": 4,
+  "mode": "unsupervised_one_class_svm_tabular",
+  "algorithm": "OneClassSVM",
+  "feature_version": 3,
+  "features": [
+    "user_hash",
+    "host_hash",
+    "ip_o1",
+    "ip_o2",
+    "ip_o3",
+    "ip_o4",
+    "hour",
+    "country_hash"
+  ],
+  "excluded": [
+    "rule",
+    "level",
+    "blacklisted",
+    "ip_score",
+    "embeddings"
+  ],
+  "nu": 0.08,
+  "kernel": "rbf",
+  "pipeline": [
+    "StandardScaler",
+    "OneClassSVM"
+  ],
+  "n_fit_baseline": 300,
+  "n_eval_probes": 40,
+  "feature_dim": 8,
+  "note": "Tabular One-Class SVM only. Probes are evaluation-only; fit never saw them or any labels.",
+  "metrics": {
+    "outlier_rate_baseline": 0.0833,
+    "outlier_rate_attack_probes": 1.0
+  }
+}

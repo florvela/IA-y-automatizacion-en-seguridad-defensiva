@@ -1,0 +1,19 @@
+# Python
+**/__pycache__/
+*.pyc
+.venv/
+.venv-ml/
+
+# Config local
+.env
+
+# Generados en runtime por Wazuh / Shuffle (NO versionar)
+wazuh/vendor/config/wazuh_indexer_ssl_certs/
+shuffle/vendor/shuffle-database/
+
+# Cache viejo de embeddings (si quedó de un train anterior)
+data/ml/fastembed_cache/
+
+# Artefactos y basura
+*.zip
+:memory:*.ses

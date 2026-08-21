@@ -1,0 +1,278 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Laboratorio SOC — TODO EN UNO (un solo archivo, sin include)
+#  Un `docker compose up -d` levanta: Wazuh (SIEM) + worker SOC (enrichment) +
+#  servidor MCP + agente LLM (Ollama) + Jupyter + víctima + atacante.
+#
+#  Wazuh es imagen OFICIAL; la config vive en wazuh/vendor.
+#
+#  ⚠️  RAM: pesado. Asigná 10 GB+ a Docker Desktop (Settings > Resources).
+#      En Mac, antes del primer up (una vez por reinicio):
+#      docker run --rm --privileged alpine sysctl -w vm.max_map_count=262144
+# ═══════════════════════════════════════════════════════════════════════════
+name: soc-lab
+
+services:
+
+  # ══════════════════════ WAZUH (SIEM) ══════════════════════
+
+  # Genera los certificados del indexer (one-shot: corre y termina).
+  generator:
+    image: wazuh/wazuh-certs-generator:0.0.2
+    hostname: wazuh-certs-generator
+    volumes:
+      - ./wazuh/vendor/config/wazuh_indexer_ssl_certs/:/certificates/
+      - ./wazuh/vendor/config/certs.yml:/config/certs.yml
+    networks: [wazuh]
+
+  wazuh.indexer:
+    image: wazuh/wazuh-indexer:4.14.0
+    hostname: wazuh.indexer
+    restart: always
+    ports:
+      - "9200:9200"
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"   # bajado de 1g para no comer tanta RAM
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    volumes:
+      - wazuh-indexer-data:/var/lib/wazuh-indexer
+      - ./wazuh/vendor/config/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/certs/root-ca.pem
+      - ./wazuh/vendor/config/wazuh_indexer_ssl_certs/wazuh.indexer-key.pem:/usr/share/wazuh-indexer/config/certs/wazuh.indexer.key
+      - ./wazuh/vendor/config/wazuh_indexer_ssl_certs/wazuh.indexer.pem:/usr/share/wazuh-indexer/config/certs/wazuh.indexer.pem
+      - ./wazuh/vendor/config/wazuh_indexer_ssl_certs/admin.pem:/usr/share/wazuh-indexer/config/certs/admin.pem
+      - ./wazuh/vendor/config/wazuh_indexer_ssl_certs/admin-key.pem:/usr/share/wazuh-indexer/config/certs/admin-key.pem
+      - ./wazuh/vendor/config/wazuh_indexer/wazuh.indexer.yml:/usr/share/wazuh-indexer/config/opensearch.yml
+      - ./wazuh/vendor/config/wazuh_indexer/internal_users.yml:/usr/share/wazuh-indexer/config/opensearch-security/internal_users.yml
+    depends_on:
+      generator:
+        condition: service_completed_successfully
+    networks: [wazuh]
+
+  wazuh.manager:
+    image: wazuh/wazuh-manager:4.14.0
+    hostname: wazuh.manager
+    restart: always
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 655360, hard: 655360 }
+    ports:
+      - "1514:1514"
+      - "1515:1515"
+      - "514:514/udp"
+      - "55000:55000"
+    environment:
+      - INDEXER_URL=https://wazuh.indexer:9200
+      - INDEXER_USERNAME=admin
+      - INDEXER_PASSWORD=SecretPassword
+      - FILEBEAT_SSL_VERIFICATION_MODE=full
+      - SSL_CERTIFICATE_AUTHORITIES=/etc/ssl/root-ca.pem
+      - SSL_CERTIFICATE=/etc/ssl/filebeat.pem
+      - SSL_KEY=/etc/ssl/filebeat.key
+      - API_USERNAME=wazuh-wui
+      - API_PASSWORD=MyS3cr37P450r.*-
+    volumes:
+      - wazuh_api_configuration:/var/ossec/api/configuration
+      - wazuh_etc:/var/ossec/etc
+      - wazuh_logs:/var/ossec/logs
+      - wazuh_queue:/var/ossec/queue
+      - wazuh_var_multigroups:/var/ossec/var/multigroups
+      - wazuh_integrations:/var/ossec/integrations
+      - wazuh_active_response:/var/ossec/active-response/bin
+      - wazuh_agentless:/var/ossec/agentless
+      - wazuh_wodles:/var/ossec/wodles
+      - filebeat_etc:/etc/filebeat
+      - filebeat_var:/var/lib/filebeat
+      - ./wazuh/vendor/config/wazuh_indexer_ssl_certs/root-ca-manager.pem:/etc/ssl/root-ca.pem
+      - ./wazuh/vendor/config/wazuh_indexer_ssl_certs/wazuh.manager.pem:/etc/ssl/filebeat.pem
+      - ./wazuh/vendor/config/wazuh_indexer_ssl_certs/wazuh.manager-key.pem:/etc/ssl/filebeat.key
+      - ./wazuh/vendor/config/wazuh_cluster/wazuh_manager.conf:/wazuh-config-mount/etc/ossec.conf
+      # Integración custom → soc-worker (solo lectura: Wazuh exige sin permisos de escritura)
+      - ./wazuh/custom-soar:/var/ossec/integrations/custom-soar:ro
+      - ./wazuh/custom-soar.py:/var/ossec/integrations/custom-soar.py:ro
+    depends_on:
+      - wazuh.indexer
+    networks: [wazuh, soclab]   # soclab = para hablar con el soar-bridge y recibir syslog de la víctima
+
+  wazuh.dashboard:
+    image: wazuh/wazuh-dashboard:4.14.0
+    hostname: wazuh.dashboard
+    restart: always
+    ports:
+      - "443:5601"
+    environment:
+      - INDEXER_USERNAME=admin
+      - INDEXER_PASSWORD=SecretPassword
+      - WAZUH_API_URL=https://wazuh.manager
+      - DASHBOARD_USERNAME=kibanaserver
+      - DASHBOARD_PASSWORD=kibanaserver
+      - API_USERNAME=wazuh-wui
+      - API_PASSWORD=MyS3cr37P450r.*-
+    volumes:
+      - ./wazuh/vendor/config/wazuh_indexer_ssl_certs/wazuh.dashboard.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem
+      - ./wazuh/vendor/config/wazuh_indexer_ssl_certs/wazuh.dashboard-key.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem
+      - ./wazuh/vendor/config/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-dashboard/certs/root-ca.pem
+      - ./wazuh/vendor/config/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
+      - ./wazuh/vendor/config/wazuh_dashboard/wazuh.yml:/usr/share/wazuh-dashboard/data/wazuh/config/wazuh.yml
+      - wazuh-dashboard-config:/usr/share/wazuh-dashboard/data/wazuh/config
+      - wazuh-dashboard-custom:/usr/share/wazuh-dashboard/plugins/wazuh/public/assets/custom
+    depends_on:
+      - wazuh.indexer
+    networks: [wazuh]
+
+  # ══════════════════════ SOC WORKER (enrichment automático) ══════════════════════
+
+  soc-worker:
+    build: { context: ., dockerfile: services/worker/Dockerfile }
+    container_name: soc-worker
+    hostname: soc-worker
+    environment:
+      SOC_SOAR_URL: http://soar-bridge:9000
+    ports:
+      - "9100:9100"
+    depends_on: [soar-bridge]
+    restart: unless-stopped
+    networks: [soclab]
+
+  # ══════════════════════ MCP / AGENTE / LLM ══════════════════════
+
+  mcp-server:
+    build: { context: ., dockerfile: services/mcp/Dockerfile }
+    container_name: soc-mcp
+    environment:
+      SOC_STATE_DIR: /data/state
+      SOC_SEED_DIR: /app/data
+    volumes:
+      - state:/data/state
+    ports:
+      - "8080:8080"
+    networks: [soclab]
+
+  soar-bridge:
+    build: { context: ., dockerfile: services/soar/Dockerfile }
+    container_name: soc-soar
+    environment:
+      SOC_MCP_URL: http://mcp-server:8080/mcp
+      SOC_LLM_BACKEND: ${SOC_LLM_BACKEND:-ollama}
+      SOC_OLLAMA_HOST: http://ollama:11434
+      SOC_OLLAMA_MODEL: ${SOC_OLLAMA_MODEL:-llama3.2}
+      SOC_OPENAI_API_KEY: ${SOC_OPENAI_API_KEY:-}
+      SOC_OPENAI_MODEL: ${SOC_OPENAI_MODEL:-gpt-4o-mini}
+      SOC_STATE_DIR: /data/state
+      SOC_SEED_DIR: /app/data
+      SOC_DASHBOARD_URL: ${SOC_DASHBOARD_URL:-http://localhost:9000}
+      SOC_SMTP_HOST: ${SOC_SMTP_HOST:-}
+      SOC_SMTP_PORT: ${SOC_SMTP_PORT:-587}
+      SOC_SMTP_USER: ${SOC_SMTP_USER:-}
+      SOC_SMTP_PASSWORD: ${SOC_SMTP_PASSWORD:-}
+      SOC_SMTP_STARTTLS: ${SOC_SMTP_STARTTLS:-true}
+      SOC_EMAIL_FROM: ${SOC_EMAIL_FROM:-soc@lab.local}
+      SOC_EMAIL_TO: ${SOC_EMAIL_TO:-analyst@lab.local}
+      SOC_ANOMALY_ML: ${SOC_ANOMALY_ML:-true}
+    volumes:
+      - state:/data/state
+    ports:
+      - "9000:9000"
+    depends_on: [mcp-server, ollama]
+    networks: [soclab]
+
+  siem-lite:
+    build: { context: ., dockerfile: services/siem/Dockerfile }
+    container_name: soc-siem-lite
+    environment:
+      AUTH_LOG: /logs/auth.log
+      # Vacío = solo loguea (Wazuh es el SIEM de la demo; evita incidente duplicado).
+      SOAR_URL: ""
+      THRESHOLD: "5"
+      WINDOW_SECONDS: "60"
+    volumes:
+      - authlogs:/logs:ro
+    depends_on: [soar-bridge, victim]
+    networks: [soclab]
+
+  victim:
+    build: { context: ., dockerfile: services/victim/Dockerfile }
+    container_name: soc-victim
+    volumes:
+      - authlogs:/var/log/shared
+    ports:
+      - "2222:22"
+    networks: [soclab]
+
+  attacker:
+    build: { context: ., dockerfile: services/attacker/Dockerfile }
+    container_name: soc-attacker
+    environment:
+      TARGET_HOST: victim
+      TARGET_USER: root
+      ATTEMPTS: "15"
+      AUTO_ATTACK: ${AUTO_ATTACK:-false}
+    depends_on: [victim]
+    networks:
+      soclab:
+        ipv4_address: 172.20.0.66
+
+  jupyter:
+    build: { context: ., dockerfile: services/jupyter/Dockerfile }
+    container_name: soc-jupyter
+    environment:
+      SOC_MCP_URL: http://mcp-server:8080/mcp
+      SOC_LLM_BACKEND: ${SOC_LLM_BACKEND:-ollama}
+      SOC_OLLAMA_HOST: http://ollama:11434
+      SOC_STATE_DIR: /data/state
+    volumes:
+      - state:/data/state
+      - ./notebooks:/work/notebooks
+    ports:
+      - "8888:8888"
+    depends_on: [mcp-server]
+    networks: [soclab]
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: soc-ollama
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks: [soclab]
+
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: soc-ollama-init
+    depends_on: [ollama]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "sleep 5; echo 'Descargando llama3.2 (~2GB, puede tardar)...'; ollama pull llama3.2 && echo 'Modelo listo.'"]
+    restart: "no"
+    networks: [soclab]
+
+volumes:
+  state:
+  authlogs:
+  ollama:
+  # Wazuh
+  wazuh_api_configuration:
+  wazuh_etc:
+  wazuh_logs:
+  wazuh_queue:
+  wazuh_var_multigroups:
+  wazuh_integrations:
+  wazuh_active_response:
+  wazuh_agentless:
+  wazuh_wodles:
+  filebeat_etc:
+  filebeat_var:
+  wazuh-indexer-data:
+  wazuh-dashboard-config:
+  wazuh-dashboard-custom:
+  # (Shuffle eliminado — menos RAM y cero setup manual)
+
+networks:
+  soclab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+  wazuh:
+    driver: bridge

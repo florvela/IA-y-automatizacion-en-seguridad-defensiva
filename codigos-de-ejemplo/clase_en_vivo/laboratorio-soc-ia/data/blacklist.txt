@@ -1,0 +1,11 @@
+# Blacklist interna de IPs maliciosas conocidas (una por línea).
+# El servidor MCP consulta este archivo en check_ip_reputation.
+#
+# 172.20.0.66 es la IP FIJA del contenedor atacante en la red del lab:
+# así la demo es determinística (la IP que ataca "ya es conocida como maliciosa").
+172.20.0.66
+
+# Ejemplos de IPs públicas maliciosas (para pruebas manuales en el notebook).
+185.220.101.4
+45.155.205.233
+193.106.191.19

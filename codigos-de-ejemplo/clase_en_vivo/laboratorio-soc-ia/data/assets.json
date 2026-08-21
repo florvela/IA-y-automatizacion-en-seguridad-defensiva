@@ -1,0 +1,20 @@
+{
+  "victim": {
+    "name": "victim",
+    "criticality": "high",
+    "role": "servidor SSH de producción (lab)",
+    "note": "Host expuesto; compromiso = acceso a la red interna."
+  },
+  "wazuh.manager": {
+    "name": "wazuh.manager",
+    "criticality": "critical",
+    "role": "SIEM / management",
+    "note": "Activo de seguridad: impacto alto si se compromete."
+  },
+  "unknown": {
+    "name": "unknown",
+    "criticality": "medium",
+    "role": "host no inventariado",
+    "note": "Sin clasificación formal."
+  }
+}

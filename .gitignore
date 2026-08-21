@@ -210,6 +210,7 @@ __marimo__/
 *.pkl
 
 *.DS_Store
+*.zip
 *EXTRA.md
 .obsidian/
 codigos-de-ejemplo/04-fundamentos-soar/shuffle/shuffle-files/*

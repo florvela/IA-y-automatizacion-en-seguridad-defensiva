@@ -1,0 +1,13 @@
+#!/bin/sh
+# Wrapper que Wazuh invoca. Llama al script Python con el mismo set de argumentos.
+# (Wazuh busca un ejecutable llamado exactamente como el <name> de la integración.)
+WPYTHON_BIN="framework/python/bin/python3"
+SCRIPT_PATH_NAME="$0"
+DIR_NAME="$(cd "$(dirname "$SCRIPT_PATH_NAME")" && pwd)"
+
+# Usamos el Python embebido de Wazuh si existe; si no, el del sistema.
+if [ -x "${DIR_NAME}/../${WPYTHON_BIN}" ]; then
+    "${DIR_NAME}/../${WPYTHON_BIN}" "${DIR_NAME}/custom-soar.py" "$@"
+else
+    python3 "${DIR_NAME}/custom-soar.py" "$@"
+fi
